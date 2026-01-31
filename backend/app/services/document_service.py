@@ -6,6 +6,7 @@ from pypdf import PdfReader
 from supabase import create_client
 
 from app.config import settings
+from app.services.metadata_service import extract_chunk_key_terms, extract_document_metadata
 from app.services.openai_service import generate_embeddings
 
 logger = logging.getLogger(__name__)
@@ -13,6 +14,7 @@ logger = logging.getLogger(__name__)
 CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 200
 EMBEDDING_BATCH_SIZE = 100
+KEY_TERMS_BATCH_SIZE = 5
 
 
 def _get_service_client():
@@ -57,6 +59,16 @@ def process_document(document_id: str, file_path: str, mime_type: str) -> None:
         # Download file from Supabase Storage
         file_bytes = client.storage.from_("documents").download(file_path)
 
+        # Fetch filename from document record
+        doc_record = (
+            client.table("documents")
+            .select("filename")
+            .eq("id", document_id)
+            .single()
+            .execute()
+        )
+        filename = doc_record.data.get("filename", "unknown")
+
         # Extract text
         text = _extract_text(file_bytes, mime_type)
         if not text.strip():
@@ -65,6 +77,29 @@ def process_document(document_id: str, file_path: str, mime_type: str) -> None:
         # Chunk text
         chunks = _chunk_text(text)
 
+        # Extract metadata (graceful degradation — failures don't block processing)
+        doc_metadata = {}
+        chunk_key_terms = [[] for _ in chunks]
+        try:
+            meta = extract_document_metadata(text, filename)
+            doc_metadata = {
+                "topic": meta.topic,
+                "document_type": meta.document_type,
+                "language": meta.language,
+            }
+        except Exception as e:
+            logger.warning(f"Document metadata extraction failed for {document_id}: {e}")
+
+        try:
+            all_terms = []
+            for i in range(0, len(chunks), KEY_TERMS_BATCH_SIZE):
+                batch = chunks[i : i + KEY_TERMS_BATCH_SIZE]
+                batch_terms = extract_chunk_key_terms(batch)
+                all_terms.extend(batch_terms)
+            chunk_key_terms = all_terms
+        except Exception as e:
+            logger.warning(f"Chunk key_terms extraction failed for {document_id}: {e}")
+
         # Generate embeddings in batches
         all_embeddings = []
         for i in range(0, len(chunks), EMBEDDING_BATCH_SIZE):
@@ -72,13 +107,17 @@ def process_document(document_id: str, file_path: str, mime_type: str) -> None:
             batch_embeddings = generate_embeddings(batch)
             all_embeddings.extend(batch_embeddings)
 
-        # Insert chunks into DB
+        # Build chunk rows with metadata
         rows = [
             {
                 "document_id": document_id,
                 "content": chunk,
                 "embedding": embedding,
                 "chunk_index": idx,
+                "metadata": {
+                    **doc_metadata,
+                    "key_terms": chunk_key_terms[idx] if idx < len(chunk_key_terms) else [],
+                },
             }
             for idx, (chunk, embedding) in enumerate(zip(chunks, all_embeddings))
         ]

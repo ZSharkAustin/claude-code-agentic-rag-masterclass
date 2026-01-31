@@ -28,14 +28,34 @@ SEARCH_DOCUMENTS_TOOL = {
     "type": "function",
     "function": {
         "name": "search_documents",
-        "description": "Search the user's uploaded documents for relevant information. Use this when the user asks about their documents or needs information that might be in their uploaded files.",
+        "description": (
+            "Search the user's uploaded documents for relevant information. "
+            "Use this when the user asks about their documents or needs information "
+            "that might be in their uploaded files. You can optionally filter by "
+            "document_type or topic to narrow results."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
                     "description": "The search query to find relevant document chunks",
-                }
+                },
+                "document_type": {
+                    "type": "string",
+                    "description": (
+                        'Optional filter by document type, e.g. "research paper", '
+                        '"contract", "manual", "report", "readme", "tutorial". '
+                        "Only include if the user explicitly mentions or implies a specific document type."
+                    ),
+                },
+                "topic": {
+                    "type": "string",
+                    "description": (
+                        "Optional filter by topic/subject area. Only include if "
+                        "the user asks about a specific topic and you want to narrow results."
+                    ),
+                },
             },
             "required": ["query"],
         },
@@ -43,7 +63,12 @@ SEARCH_DOCUMENTS_TOOL = {
 }
 
 
-def _execute_search(query: str, user_id: str) -> str:
+def _execute_search(
+    query: str,
+    user_id: str,
+    document_type: str | None = None,
+    topic: str | None = None,
+) -> str:
     """Execute document search via match_chunks RPC using service role."""
     service_client = create_client(
         settings.supabase_url, settings.supabase_service_role_key
@@ -51,23 +76,43 @@ def _execute_search(query: str, user_id: str) -> str:
 
     query_embedding = generate_embeddings([query])[0]
 
-    result = service_client.rpc(
-        "match_chunks",
-        {
-            "query_embedding": query_embedding,
-            "match_count": 5,
-            "filter_user_id": user_id,
-        },
-    ).execute()
+    # Build metadata filter from provided params
+    metadata_filter = {}
+    if document_type:
+        metadata_filter["document_type"] = document_type
+    if topic:
+        metadata_filter["topic"] = topic
+
+    rpc_params = {
+        "query_embedding": query_embedding,
+        "match_count": 5,
+        "filter_user_id": user_id,
+    }
+    if metadata_filter:
+        rpc_params["metadata_filter"] = json.dumps(metadata_filter)
+
+    result = service_client.rpc("match_chunks", rpc_params).execute()
 
     if not result.data:
         return "No relevant documents found."
 
     chunks = []
     for chunk in result.data:
-        chunks.append(
-            f"[Document chunk {chunk['chunk_index']}]\n{chunk['content']}"
-        )
+        metadata = chunk.get("metadata", {}) or {}
+        meta_parts = []
+        if metadata.get("document_type"):
+            meta_parts.append(f"Type: {metadata['document_type']}")
+        if metadata.get("topic"):
+            meta_parts.append(f"Topic: {metadata['topic']}")
+        if metadata.get("key_terms"):
+            meta_parts.append(f"Key terms: {', '.join(metadata['key_terms'])}")
+
+        header = f"[Document chunk {chunk['chunk_index']}"
+        if meta_parts:
+            header += f" | {' | '.join(meta_parts)}"
+        header += "]"
+
+        chunks.append(f"{header}\n{chunk['content']}")
     return "\n\n---\n\n".join(chunks)
 
 
@@ -132,7 +177,12 @@ async def chat(
         for tool_call in assistant_msg.tool_calls:
             if tool_call.function.name == "search_documents":
                 args = json.loads(tool_call.function.arguments)
-                result = _execute_search(args["query"], user.id)
+                result = _execute_search(
+                    query=args["query"],
+                    user_id=user.id,
+                    document_type=args.get("document_type"),
+                    topic=args.get("topic"),
+                )
                 messages.append(
                     {
                         "role": "tool",

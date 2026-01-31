@@ -45,3 +45,10 @@ Track your progress through the masterclass. Update this file as you complete mo
 - [x] 1.1 Database migration (content_hash column + unique index + lookup index)
 - [x] 1.2 Update DocumentResponse model (content_hash field)
 - [x] 1.3 Content hash computation + dedup check at upload time (SHA-256, 409 on duplicate)
+
+### Module 4: Metadata Extraction
+- [x] 1.1 Pydantic metadata models (DocumentMetadata, ChunkKeyTerms, ChunkMetadata)
+- [x] 1.2 Metadata extraction service (document-level + batched chunk key_terms)
+- [x] 2.1 Integrate metadata extraction into document processing pipeline
+- [x] 3.1 SQL migration (match_chunks with metadata_filter param + GIN index)
+- [x] 3.2 Update search_documents tool with document_type and topic filter params
