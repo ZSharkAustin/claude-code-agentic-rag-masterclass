@@ -1,11 +1,12 @@
 import { useState, useCallback } from "react";
-import { Menu } from "lucide-react";
+import { Menu, MessageSquare, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { ThreadSidebar } from "@/components/ThreadSidebar";
 import { MessageList } from "@/components/MessageList";
 import { ChatInput } from "@/components/ChatInput";
 import { UserMenu } from "@/components/UserMenu";
+import { DocumentsPage } from "@/pages/DocumentsPage";
 import { useThreads } from "@/hooks/useThreads";
 import { useChat } from "@/hooks/useChat";
 
@@ -16,20 +17,21 @@ export function ChatPage() {
     updateThread,
     deleteThread,
   } = useThreads();
-  const { messages, isStreaming, error, sendMessage, clearMessages, retryLastMessage } =
+  const { messages, isStreaming, error, sendMessage, clearMessages, loadMessages, retryLastMessage } =
     useChat();
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [view, setView] = useState<"chat" | "documents">("chat");
 
   const activeThread = threads.find((t) => t.id === activeThreadId);
 
   const handleSelectThread = useCallback(
     (id: string) => {
       setActiveThreadId(id);
-      clearMessages();
+      loadMessages(id);
       setMobileOpen(false);
     },
-    [clearMessages]
+    [loadMessages]
   );
 
   const handleNewChat = useCallback(async () => {
@@ -97,14 +99,40 @@ export function ChatPage() {
       <div className="flex flex-1 flex-col">
         {/* Header */}
         <div className="flex items-center justify-between border-b px-4 py-2">
-          <h1 className="text-lg font-semibold truncate pl-10 md:pl-0">
-            {activeThread?.title || "Select a conversation"}
-          </h1>
+          <div className="flex items-center gap-2 pl-10 md:pl-0">
+            <div className="flex rounded-lg border p-0.5">
+              <Button
+                variant={view === "chat" ? "secondary" : "ghost"}
+                size="sm"
+                onClick={() => setView("chat")}
+                className="gap-1.5"
+              >
+                <MessageSquare className="h-4 w-4" />
+                Chat
+              </Button>
+              <Button
+                variant={view === "documents" ? "secondary" : "ghost"}
+                size="sm"
+                onClick={() => setView("documents")}
+                className="gap-1.5"
+              >
+                <FileText className="h-4 w-4" />
+                Documents
+              </Button>
+            </div>
+            {view === "chat" && (
+              <h1 className="text-lg font-semibold truncate ml-2">
+                {activeThread?.title || "Select a conversation"}
+              </h1>
+            )}
+          </div>
           <UserMenu />
         </div>
 
-        {/* Messages */}
-        {activeThreadId ? (
+        {/* Content */}
+        {view === "documents" ? (
+          <DocumentsPage />
+        ) : activeThreadId ? (
           <>
             <MessageList messages={messages} />
             {error && (

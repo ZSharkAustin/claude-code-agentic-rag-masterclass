@@ -16,6 +16,23 @@ export function useChat() {
     setError(null);
   }, []);
 
+  const loadMessages = useCallback(async (threadId: string) => {
+    setError(null);
+    try {
+      const res = await apiFetch(`/api/threads/${threadId}/messages`);
+      if (res.ok) {
+        const data: { role: string; content: string }[] = await res.json();
+        setMessages(
+          data
+            .filter((m) => m.role === "user" || m.role === "assistant")
+            .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }))
+        );
+      }
+    } catch {
+      // Silently fail — messages will appear empty
+    }
+  }, []);
+
   const sendMessage = useCallback(
     async (
       threadId: string,
@@ -126,5 +143,5 @@ export function useChat() {
     [messages, sendMessage]
   );
 
-  return { messages, isStreaming, error, sendMessage, clearMessages, retryLastMessage };
+  return { messages, isStreaming, error, sendMessage, clearMessages, loadMessages, retryLastMessage };
 }

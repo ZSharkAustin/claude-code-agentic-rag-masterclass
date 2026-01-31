@@ -25,3 +25,18 @@ Track your progress through the masterclass. Update this file as you complete mo
 - [x] 5.1 LangSmith tracing (wrap_openai + @traceable)
 - [x] 6.1 End-to-end smoke test
 - [x] 6.2 Error handling verification
+
+### Module 2: BYO Retrieval + Memory
+- [x] 1.1 Database schema (messages, documents, chunks, pgvector, match_chunks, storage bucket)
+- [x] 1.2 Switch to Chat Completions API (OpenRouter) + message history
+- [x] 1.3 Messages router (GET /api/threads/{id}/messages)
+- [x] 2.1 pypdf dependency
+- [x] 2.2 Document Pydantic models
+- [x] 2.3 Document processing service (extract, chunk, embed, store)
+- [x] 2.4 Documents router (POST/GET/DELETE /api/documents)
+- [x] 2.5 RAG tool calling (search_documents tool in chat endpoint)
+- [x] 3.1 Load message history on thread select
+- [x] 3.2 API upload helper (multipart FormData)
+- [x] 3.3 useDocuments hook with Supabase Realtime
+- [x] 3.4 Documents page (upload, list, status badges, delete)
+- [x] 3.5 Tab navigation (Chat / Documents)
