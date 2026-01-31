@@ -40,3 +40,8 @@ Track your progress through the masterclass. Update this file as you complete mo
 - [x] 3.3 useDocuments hook with Supabase Realtime
 - [x] 3.4 Documents page (upload, list, status badges, delete)
 - [x] 3.5 Tab navigation (Chat / Documents)
+
+### Module 3: Record Manager
+- [x] 1.1 Database migration (content_hash column + unique index + lookup index)
+- [x] 1.2 Update DocumentResponse model (content_hash field)
+- [x] 1.3 Content hash computation + dedup check at upload time (SHA-256, 409 on duplicate)

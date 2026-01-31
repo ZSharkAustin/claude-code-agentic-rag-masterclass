@@ -1,3 +1,4 @@
+import hashlib
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile
@@ -38,6 +39,24 @@ async def upload_document(
     if len(content) > MAX_FILE_SIZE:
         raise HTTPException(status_code=400, detail="File too large (max 20 MB)")
 
+    # Compute content hash for deduplication
+    content_hash = hashlib.sha256(content).hexdigest()
+
+    # Check for duplicate: same user, same content, already processed
+    existing = (
+        supabase.table("documents")
+        .select("id")
+        .eq("content_hash", content_hash)
+        .eq("status", "ready")
+        .limit(1)
+        .execute()
+    )
+    if existing.data:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Document with identical content already exists (id: {existing.data[0]['id']})",
+        )
+
     # Upload to Supabase Storage using service role (user RLS folder path)
     file_id = str(uuid.uuid4())
     storage_path = f"{user.id}/{file_id}/{file.filename}"
@@ -57,6 +76,7 @@ async def upload_document(
         "file_size": len(content),
         "mime_type": mime_type,
         "status": "uploading",
+        "content_hash": content_hash,
     }
     result = supabase.table("documents").insert(doc_data).execute()
     doc = result.data[0]

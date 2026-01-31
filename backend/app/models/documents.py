@@ -11,6 +11,7 @@ class DocumentResponse(BaseModel):
     mime_type: str
     status: str
     chunk_count: int
+    content_hash: str | None = None
     error_message: str | None = None
     created_at: datetime
     updated_at: datetime
