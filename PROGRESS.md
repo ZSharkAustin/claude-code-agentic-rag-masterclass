@@ -52,3 +52,12 @@ Track your progress through the masterclass. Update this file as you complete mo
 - [x] 2.1 Integrate metadata extraction into document processing pipeline
 - [x] 3.1 SQL migration (match_chunks with metadata_filter param + GIN index)
 - [x] 3.2 Update search_documents tool with document_type and topic filter params
+
+### Module 5: Multi-Format Support
+- [x] 1.1 Add docling dependency
+- [x] 2.1 Replace _extract_text with docling-based _convert_document (PDF, DOCX, HTML, MD via docling; TXT via UTF-8 decode; pypdf PDF fallback)
+- [x] 2.2 Replace _chunk_text with _chunk_document (HierarchicalChunker for DoclingDocument, sliding window for plain text)
+- [x] 2.3 Update process_document orchestrator to use new pipeline
+- [x] 3.1 Expand ALLOWED_MIME_TYPES (DOCX, HTML) + MIME normalization
+- [x] 3.2 Update frontend file input accept and empty state text
+- [x] 4.1 Fix cascade delete order (DB first, then best-effort storage cleanup)

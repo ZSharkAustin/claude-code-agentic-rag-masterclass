@@ -1,6 +1,12 @@
 import io
 import logging
+import threading
+from typing import Union
 
+from docling.datamodel.document import DocumentStream
+from docling.document_converter import DocumentConverter
+from docling_core.transforms.chunker import HierarchicalChunker
+from docling_core.types.doc.document import DoclingDocument
 from langsmith import traceable
 from pypdf import PdfReader
 from supabase import create_client
@@ -16,33 +22,74 @@ CHUNK_OVERLAP = 200
 EMBEDDING_BATCH_SIZE = 100
 KEY_TERMS_BATCH_SIZE = 5
 
+_converter: DocumentConverter | None = None
+_converter_lock = threading.Lock()
+
+
+def _get_converter() -> DocumentConverter:
+    """Lazy-init singleton DocumentConverter (expensive to create)."""
+    global _converter
+    if _converter is None:
+        with _converter_lock:
+            if _converter is None:
+                _converter = DocumentConverter()
+    return _converter
+
 
 def _get_service_client():
     """Create a Supabase client with service role key (bypasses RLS)."""
     return create_client(settings.supabase_url, settings.supabase_service_role_key)
 
 
-def _extract_text(file_bytes: bytes, mime_type: str) -> str:
-    """Extract text content from supported file types."""
-    if mime_type == "application/pdf":
-        reader = PdfReader(io.BytesIO(file_bytes))
-        pages = [page.extract_text() or "" for page in reader.pages]
-        return "\n\n".join(pages)
-    elif mime_type in ("text/plain", "text/markdown"):
+def _extract_text_pypdf(file_bytes: bytes) -> str:
+    """Extract text from PDF using pypdf (fallback)."""
+    reader = PdfReader(io.BytesIO(file_bytes))
+    pages = [page.extract_text() or "" for page in reader.pages]
+    return "\n\n".join(pages)
+
+
+def _convert_document(
+    file_bytes: bytes, mime_type: str, filename: str
+) -> Union[DoclingDocument, str]:
+    """Convert a document to a DoclingDocument or plain string.
+
+    - TXT: direct UTF-8 decode → str
+    - PDF, DOCX, HTML, MD: docling conversion → DoclingDocument
+    - PDF fallback: if docling fails, use pypdf → str
+    """
+    if mime_type == "text/plain":
         return file_bytes.decode("utf-8")
-    else:
-        raise ValueError(f"Unsupported file type: {mime_type}")
+
+    try:
+        stream = DocumentStream(name=filename, stream=io.BytesIO(file_bytes))
+        converter = _get_converter()
+        result = converter.convert(stream)
+        return result.document
+    except Exception as e:
+        if mime_type == "application/pdf":
+            logger.warning(f"Docling PDF conversion failed, falling back to pypdf: {e}")
+            return _extract_text_pypdf(file_bytes)
+        raise
 
 
-def _chunk_text(text: str) -> list[str]:
-    """Split text into overlapping chunks."""
-    chunks = []
-    start = 0
-    while start < len(text):
-        end = start + CHUNK_SIZE
-        chunks.append(text[start:end])
-        start += CHUNK_SIZE - CHUNK_OVERLAP
-    return chunks
+def _chunk_document(doc_or_text: Union[DoclingDocument, str]) -> list[str]:
+    """Chunk a document using the appropriate strategy.
+
+    - DoclingDocument: HierarchicalChunker for document-aware chunks
+    - str (TXT or pypdf fallback): sliding window chunks
+    """
+    if isinstance(doc_or_text, str):
+        chunks = []
+        start = 0
+        while start < len(doc_or_text):
+            end = start + CHUNK_SIZE
+            chunks.append(doc_or_text[start:end])
+            start += CHUNK_SIZE - CHUNK_OVERLAP
+        return chunks
+
+    chunker = HierarchicalChunker()
+    chunks = [chunk.text for chunk in chunker.chunk(doc_or_text)]
+    return chunks if chunks else [doc_or_text.export_to_text()]
 
 
 @traceable(name="process_document")
@@ -69,13 +116,14 @@ def process_document(document_id: str, file_path: str, mime_type: str) -> None:
         )
         filename = doc_record.data.get("filename", "unknown")
 
-        # Extract text
-        text = _extract_text(file_bytes, mime_type)
+        # Convert document
+        doc_or_text = _convert_document(file_bytes, mime_type, filename)
+        text = doc_or_text if isinstance(doc_or_text, str) else doc_or_text.export_to_text()
         if not text.strip():
             raise ValueError("No text content extracted from file")
 
-        # Chunk text
-        chunks = _chunk_text(text)
+        # Chunk document
+        chunks = _chunk_document(doc_or_text)
 
         # Extract metadata (graceful degradation — failures don't block processing)
         doc_metadata = {}

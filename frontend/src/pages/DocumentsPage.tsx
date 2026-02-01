@@ -58,7 +58,7 @@ export function DocumentsPage() {
           <input
             ref={fileInputRef}
             type="file"
-            accept=".pdf,.txt,.md"
+            accept=".pdf,.txt,.md,.docx,.html,.htm"
             className="hidden"
             onChange={handleUpload}
           />
@@ -88,7 +88,7 @@ export function DocumentsPage() {
         </div>
       ) : documents.length === 0 ? (
         <div className="flex flex-1 items-center justify-center text-muted-foreground">
-          <p>No documents uploaded yet. Upload a PDF, TXT, or MD file to get started.</p>
+          <p>No documents uploaded yet. Upload a PDF, DOCX, TXT, HTML, or MD file to get started.</p>
         </div>
       ) : (
         <div className="space-y-2">

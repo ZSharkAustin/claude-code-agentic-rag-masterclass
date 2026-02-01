@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile
@@ -10,9 +11,17 @@ from app.models.documents import DocumentResponse
 from app.services.document_service import process_document
 from supabase import create_client
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["documents"])
 
-ALLOWED_MIME_TYPES = {"application/pdf", "text/plain", "text/markdown"}
+ALLOWED_MIME_TYPES = {
+    "application/pdf",
+    "text/plain",
+    "text/markdown",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "text/html",
+}
 MAX_FILE_SIZE = 20 * 1024 * 1024  # 20 MB
 
 
@@ -25,13 +34,18 @@ async def upload_document(
 ):
     # Validate mime type
     mime_type = file.content_type or ""
-    # Treat .md files that come as application/octet-stream or text/x-markdown
-    if file.filename and file.filename.endswith(".md"):
-        mime_type = "text/markdown"
+    # Normalize MIME types for extensions that browsers may misidentify
+    if file.filename:
+        if file.filename.endswith(".md"):
+            mime_type = "text/markdown"
+        elif file.filename.endswith(".docx"):
+            mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        elif file.filename.endswith((".html", ".htm")):
+            mime_type = "text/html"
     if mime_type not in ALLOWED_MIME_TYPES:
         raise HTTPException(
             status_code=400,
-            detail=f"Unsupported file type: {mime_type}. Allowed: PDF, TXT, MD",
+            detail=f"Unsupported file type: {mime_type}. Allowed: PDF, TXT, MD, DOCX, HTML",
         )
 
     # Read file content
@@ -140,11 +154,13 @@ async def delete_document(
 
     file_path = result.data["file_path"]
 
-    # Delete from storage using service role
-    service_client = create_client(
-        settings.supabase_url, settings.supabase_service_role_key
-    )
-    service_client.storage.from_("documents").remove([file_path])
-
-    # Delete document record (chunks cascade automatically)
+    # Delete DB record first (chunks cascade via FK), then best-effort storage cleanup
     supabase.table("documents").delete().eq("id", document_id).execute()
+
+    try:
+        service_client = create_client(
+            settings.supabase_url, settings.supabase_service_role_key
+        )
+        service_client.storage.from_("documents").remove([file_path])
+    except Exception as e:
+        logger.warning(f"Storage cleanup failed for {file_path}: {e}")
