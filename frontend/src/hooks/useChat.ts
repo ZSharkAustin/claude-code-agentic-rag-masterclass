@@ -1,9 +1,17 @@
 import { useState, useCallback } from "react";
 import { apiFetch } from "@/lib/api";
 
+export interface Source {
+  content: string;
+  chunk_index: number;
+  document_id: string;
+  metadata: Record<string, unknown>;
+}
+
 export interface Message {
   role: "user" | "assistant";
   content: string;
+  sources?: Source[];
 }
 
 export function useChat() {
@@ -83,6 +91,18 @@ export function useChat() {
                 const data = JSON.parse(rawData);
                 if (currentEvent === "error" && data.error) {
                   throw new Error(data.error);
+                } else if (currentEvent === "sources" && data.sources) {
+                  setMessages((prev) => {
+                    const updated = [...prev];
+                    const last = updated[updated.length - 1];
+                    if (last.role === "assistant") {
+                      updated[updated.length - 1] = {
+                        ...last,
+                        sources: data.sources as Source[],
+                      };
+                    }
+                    return updated;
+                  });
                 } else if (data.text !== undefined) {
                   // delta event
                   setMessages((prev) => {

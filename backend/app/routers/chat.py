@@ -1,4 +1,5 @@
 import json
+import re
 from fastapi import APIRouter, Depends, HTTPException
 from langsmith import traceable
 from openai import AuthenticationError, APIError
@@ -14,7 +15,9 @@ from app.services.openai_service import (
     chat_completion,
     generate_thread_title,
     generate_embeddings,
+    is_ollama,
 )
+from app.services.reranker_service import is_reranker_available, rerank_chunks
 
 router = APIRouter(tags=["chat"])
 
@@ -63,13 +66,13 @@ SEARCH_DOCUMENTS_TOOL = {
 }
 
 
-def _execute_search(
+def _fetch_chunks(
     query: str,
     user_id: str,
     document_type: str | None = None,
     topic: str | None = None,
-) -> str:
-    """Execute hybrid document search via match_chunks_hybrid RPC using service role."""
+) -> list[dict]:
+    """Fetch matching chunks via match_chunks_hybrid RPC using service role."""
     service_client = create_client(
         settings.supabase_url, settings.supabase_service_role_key
     )
@@ -83,9 +86,12 @@ def _execute_search(
     if topic:
         metadata_filter["topic"] = topic
 
+    reranker_enabled = is_reranker_available()
+    match_count = 20 if reranker_enabled else 5
+
     rpc_params = {
         "query_embedding": query_embedding,
-        "match_count": 5,
+        "match_count": match_count,
         "filter_user_id": user_id,
         "query_text": query,
     }
@@ -95,10 +101,22 @@ def _execute_search(
     result = service_client.rpc("match_chunks_hybrid", rpc_params).execute()
 
     if not result.data:
+        return []
+
+    chunks_data = result.data
+    if reranker_enabled:
+        chunks_data = rerank_chunks(query, chunks_data, top_n=5)
+
+    return chunks_data
+
+
+def _format_search_context(chunks_data: list[dict]) -> str:
+    """Format chunks into a text string for injection into LLM prompts."""
+    if not chunks_data:
         return "No relevant documents found."
 
     chunks = []
-    for chunk in result.data:
+    for chunk in chunks_data:
         metadata = chunk.get("metadata", {}) or {}
         meta_parts = []
         if metadata.get("document_type"):
@@ -115,6 +133,53 @@ def _execute_search(
 
         chunks.append(f"{header}\n{chunk['content']}")
     return "\n\n---\n\n".join(chunks)
+
+
+_MD_PATTERNS = re.compile(
+    r"#{1,6}\s+"       # headings
+    r"|[*_]{1,3}"      # bold/italic markers
+    r"|\[([^\]]*)\]\([^)]*\)"  # links → keep text
+    r"|`{1,3}"         # code markers
+    r"|^>\s+"          # blockquotes
+    r"|^-\s+"          # unordered list markers
+    r"|^\d+\.\s+"      # ordered list markers
+    r"|\|"             # table pipes
+    , re.MULTILINE,
+)
+
+
+def _strip_markdown(text: str) -> str:
+    """Remove common markdown formatting characters from text."""
+    result = _MD_PATTERNS.sub(lambda m: m.group(1) if m.group(1) else "", text)
+    return " ".join(result.split())
+
+
+def _build_sources(
+    chunks_data: list[dict],
+    max_sources: int = 3,
+    similarity_threshold: float = 0.3,
+) -> list[dict]:
+    """Build structured sources list, keeping only relevant chunks."""
+    sources = []
+    for chunk in chunks_data:
+        # Use reranker relevance_score if available, otherwise fall back to similarity
+        score = chunk.get("relevance_score") or chunk.get("similarity") or 0
+        if score < similarity_threshold:
+            continue
+        metadata = chunk.get("metadata", {}) or {}
+        sources.append({
+            "content": _strip_markdown(chunk.get("content", ""))[:200],
+            "chunk_index": chunk.get("chunk_index", 0),
+            "document_id": chunk.get("document_id", ""),
+            "metadata": {
+                k: v
+                for k, v in metadata.items()
+                if k in ("topic", "document_type", "key_terms")
+            },
+        })
+        if len(sources) >= max_sources:
+            break
+    return sources
 
 
 @router.post("/chat")
@@ -159,44 +224,70 @@ async def chat(
         .limit(1)
         .execute()
     )
-    tools = [SEARCH_DOCUMENTS_TOOL] if doc_result.data else None
+    has_documents = bool(doc_result.data)
 
-    # Tool-call loop (max 3 rounds)
-    for _ in range(3):
-        try:
-            assistant_msg = chat_completion(messages, tools)
-        except (AuthenticationError, APIError):
-            break
+    sources_list: list[dict] = []
 
-        if not assistant_msg.tool_calls:
-            break
+    if is_ollama() and has_documents:
+        # Ollama/Gemma3 doesn't support tool calling — always search and inject context
+        chunks_data = _fetch_chunks(query=body.message, user_id=user.id)
+        search_result = _format_search_context(chunks_data)
+        sources_list = _build_sources(chunks_data)
+        messages[0] = {
+            "role": "system",
+            "content": (
+                SYSTEM_PROMPT
+                + "\n\nHere are relevant excerpts from the user's documents:\n\n"
+                + search_result
+            ),
+        }
+    elif not is_ollama():
+        tools = [SEARCH_DOCUMENTS_TOOL] if has_documents else None
 
-        # Append assistant message with tool calls
-        messages.append(assistant_msg.model_dump())
+        # Tool-call loop (max 3 rounds)
+        for _ in range(3):
+            try:
+                assistant_msg = chat_completion(messages, tools)
+            except (AuthenticationError, APIError):
+                break
 
-        # Execute each tool call
-        for tool_call in assistant_msg.tool_calls:
-            if tool_call.function.name == "search_documents":
-                args = json.loads(tool_call.function.arguments)
-                result = _execute_search(
-                    query=args["query"],
-                    user_id=user.id,
-                    document_type=args.get("document_type"),
-                    topic=args.get("topic"),
-                )
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": result,
-                    }
-                )
+            if not assistant_msg.tool_calls:
+                break
 
-        # Don't offer tools on subsequent rounds to force a final answer
-        tools = None
+            # Append assistant message with tool calls
+            messages.append(assistant_msg.model_dump())
+
+            # Execute each tool call
+            for tool_call in assistant_msg.tool_calls:
+                if tool_call.function.name == "search_documents":
+                    args = json.loads(tool_call.function.arguments)
+                    chunks_data = _fetch_chunks(
+                        query=args["query"],
+                        user_id=user.id,
+                        document_type=args.get("document_type"),
+                        topic=args.get("topic"),
+                    )
+                    result = _format_search_context(chunks_data)
+                    sources_list = _build_sources(chunks_data)
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": result,
+                        }
+                    )
+
+            # Don't offer tools on subsequent rounds to force a final answer
+            tools = None
 
     async def event_generator():
         full_response = ""
+
+        if sources_list:
+            yield {
+                "event": "sources",
+                "data": json.dumps({"sources": sources_list}),
+            }
 
         try:
             for event in stream_chat_response(messages):
