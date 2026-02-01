@@ -61,3 +61,7 @@ Track your progress through the masterclass. Update this file as you complete mo
 - [x] 3.1 Expand ALLOWED_MIME_TYPES (DOCX, HTML) + MIME normalization
 - [x] 3.2 Update frontend file input accept and empty state text
 - [x] 4.1 Fix cascade delete order (DB first, then best-effort storage cleanup)
+
+### Module 6: Hybrid Search
+- [x] 1.1 SQL migration (tsvector generated column, GIN index, `match_chunks_hybrid` RRF function)
+- [x] 2.1 Update chat search to use `match_chunks_hybrid` with `query_text` parameter

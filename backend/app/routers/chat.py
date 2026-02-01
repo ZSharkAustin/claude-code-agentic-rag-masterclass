@@ -69,7 +69,7 @@ def _execute_search(
     document_type: str | None = None,
     topic: str | None = None,
 ) -> str:
-    """Execute document search via match_chunks RPC using service role."""
+    """Execute hybrid document search via match_chunks_hybrid RPC using service role."""
     service_client = create_client(
         settings.supabase_url, settings.supabase_service_role_key
     )
@@ -87,11 +87,12 @@ def _execute_search(
         "query_embedding": query_embedding,
         "match_count": 5,
         "filter_user_id": user_id,
+        "query_text": query,
     }
     if metadata_filter:
         rpc_params["metadata_filter"] = json.dumps(metadata_filter)
 
-    result = service_client.rpc("match_chunks", rpc_params).execute()
+    result = service_client.rpc("match_chunks_hybrid", rpc_params).execute()
 
     if not result.data:
         return "No relevant documents found."
