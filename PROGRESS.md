@@ -65,3 +65,18 @@ Track your progress through the masterclass. Update this file as you complete mo
 ### Module 6: Hybrid Search
 - [x] 1.1 SQL migration (tsvector generated column, GIN index, `match_chunks_hybrid` RRF function)
 - [x] 2.1 Update chat search to use `match_chunks_hybrid` with `query_text` parameter
+
+### Module 7: Reranking
+- [x] 1.1 Add `cohere` dependency
+- [x] 1.2 Add `cohere_api_key` and `cohere_rerank_model` config fields
+- [x] 1.3 Update `.env.example` with Cohere settings
+- [x] 2.1 Create reranker service (`reranker_service.py` with Cohere client, `@traceable`)
+- [x] 2.2 Integrate reranking into `_execute_search()` (over-retrieve 20, rerank to 5, graceful fallback)
+
+### Module 8: RAG Sources UI
+- [x] 1.1 Refactor `_execute_search` into `_fetch_chunks`, `_format_search_context`, `_build_sources` helpers
+- [x] 1.2 Emit `sources` SSE event with structured chunk data (content preview, metadata, document_id)
+- [x] 1.3 Filter sources by relevance score (reranker or cosine similarity) and cap at top 3
+- [x] 2.1 Extend `Message` interface with `Source` type, handle `sources` SSE event in `useChat.ts`
+- [x] 2.2 Collapsible "relevant sources" section in `MessageBubble.tsx` with metadata badges and content previews
+- [x] 2.3 Strip markdown formatting from source content previews
